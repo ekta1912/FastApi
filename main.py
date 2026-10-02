@@ -7,11 +7,15 @@ import json
 tags_metadata = [
     {
         "name": "General",
-        "description": "General system information and landing endpoints.",
+        "description": "General system information, health checks, and landing endpoints.",
     },
     {
         "name": "Patients",
         "description": "Comprehensive CRUD and query operations for patient records.",
+    },
+    {
+        "name": "Analytics",
+        "description": "Statistical aggregation and population health analysis.",
     },
 ]
 
@@ -30,6 +34,20 @@ DATA_FILE = Path(__file__).resolve().parent / "patient.json"
 
 class MessageResponse(BaseModel):
     message: str = Field(..., description="Status or information message")
+
+class HealthResponse(BaseModel):
+    status: str = Field(..., description="API operational health status")
+    total_records: int = Field(..., description="Total patient records loaded in storage")
+    storage_active: bool = Field(..., description="Storage file accessibility status")
+
+class AnalyticsSummaryResponse(BaseModel):
+    total_patients: int = Field(..., description="Total number of registered patients")
+    average_age: float = Field(..., description="Average age of patients")
+    average_bmi: float = Field(..., description="Average BMI across patients")
+    average_weight: float = Field(..., description="Average weight in kilograms")
+    average_height: float = Field(..., description="Average height in meters")
+    gender_distribution: Dict[str, int] = Field(..., description="Breakdown of patients by gender")
+    verdict_distribution: Dict[str, int] = Field(..., description="Breakdown of patients by BMI health verdict")
 
 class PatientBase(BaseModel):
     name: str = Field(..., description="Full name of the patient", examples=["Aman Gupta"])
@@ -101,6 +119,16 @@ def save_data(data: dict) -> None:
 def hello():
     """Returns a welcome message indicating the status of the API."""
     return {"message": "Patient management system API"}
+
+@app.get("/health", response_model=HealthResponse, tags=["General"], summary="Health Check")
+def health_check():
+    """Returns system status, file storage connectivity, and total active records."""
+    data = load_data()
+    return HealthResponse(
+        status="healthy",
+        total_records=len(data),
+        storage_active=DATA_FILE.exists()
+    )
 
 @app.get('/about', response_model=MessageResponse, tags=["General"], summary="API Overview")
 def about():
@@ -188,6 +216,48 @@ def search_patients(
         limit=limit,
         offset=offset,
         patients=paginated
+    )
+
+@app.get('/analytics/summary', response_model=AnalyticsSummaryResponse, tags=["Analytics"], summary="Population Health Summary")
+def get_analytics_summary():
+    """Calculate aggregate population health statistics, averages, and distributions across all registered patients."""
+    data = load_data()
+    total = len(data)
+    if total == 0:
+        return AnalyticsSummaryResponse(
+            total_patients=0,
+            average_age=0.0,
+            average_bmi=0.0,
+            average_weight=0.0,
+            average_height=0.0,
+            gender_distribution={},
+            verdict_distribution={}
+        )
+
+    patients = list(data.values())
+    total_age = sum(p.get("age", 0) for p in patients)
+    total_bmi = sum(p.get("bmi", 0.0) for p in patients)
+    total_weight = sum(p.get("weight", 0.0) for p in patients)
+    total_height = sum(p.get("height", 0.0) for p in patients)
+
+    gender_dist: Dict[str, int] = {}
+    verdict_dist: Dict[str, int] = {}
+
+    for p in patients:
+        gender = p.get("gender", "unknown")
+        gender_dist[gender] = gender_dist.get(gender, 0) + 1
+
+        verdict = p.get("verdict", "unknown")
+        verdict_dist[verdict] = verdict_dist.get(verdict, 0) + 1
+
+    return AnalyticsSummaryResponse(
+        total_patients=total,
+        average_age=round(total_age / total, 2),
+        average_bmi=round(total_bmi / total, 2),
+        average_weight=round(total_weight / total, 2),
+        average_height=round(total_height / total, 2),
+        gender_distribution=gender_dist,
+        verdict_distribution=verdict_dist
     )
 
 @app.post('/create', response_model=MessageResponse, status_code=status.HTTP_201_CREATED, tags=["Patients"], summary="Create New Patient")
