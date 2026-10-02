@@ -35,6 +35,11 @@ DATA_FILE = Path(__file__).resolve().parent / "patient.json"
 class MessageResponse(BaseModel):
     message: str = Field(..., description="Status or information message")
 
+class BatchCreateResponse(BaseModel):
+    message: str = Field(..., description="Status message")
+    inserted_count: int = Field(..., description="Total records created in this batch")
+    inserted_ids: List[str] = Field(..., description="List of IDs successfully registered")
+
 class HealthResponse(BaseModel):
     status: str = Field(..., description="API operational health status")
     total_records: int = Field(..., description="Total patient records loaded in storage")
@@ -271,6 +276,42 @@ def create_patient(patient: Patient):
     save_data(data)
 
     return {"message": "patient created successfully"}
+
+@app.post('/batch-create', response_model=BatchCreateResponse, status_code=status.HTTP_201_CREATED, tags=["Patients"], summary="Batch Create Patients")
+def batch_create_patients(patients: List[Patient]):
+    """Register multiple patients in an atomic batch. If any patient ID is duplicate or invalid, the entire operation is rejected."""
+    if not patients:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Patient list cannot be empty")
+
+    data = load_data()
+
+    # Validate for intra-batch duplicate IDs
+    batch_ids = [p.id for p in patients]
+    if len(batch_ids) != len(set(batch_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Duplicate patient IDs found within the provided batch"
+        )
+
+    # Validate against existing IDs in storage
+    conflicts = [pid for pid in batch_ids if pid in data]
+    if conflicts:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Patient IDs already exist: {', '.join(conflicts)}"
+        )
+
+    # Perform atomic insertion
+    for patient in patients:
+        data[patient.id] = patient.model_dump(exclude={'id'})
+
+    save_data(data)
+
+    return BatchCreateResponse(
+        message="Batch patients created successfully",
+        inserted_count=len(patients),
+        inserted_ids=batch_ids
+    )
 
 @app.put('/edit/{patient_id}', response_model=MessageResponse, status_code=status.HTTP_200_OK, tags=["Patients"], summary="Update Patient Details")
 def update_patient(patient_id: str, patient_update: PatientUpdate):
