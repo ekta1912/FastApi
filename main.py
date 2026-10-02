@@ -1,7 +1,6 @@
-from fastapi import FastAPI, Path, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Path, HTTPException, Query, status
 from pydantic import BaseModel, Field, computed_field
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Literal, Optional, Dict, List
 from pathlib import Path
 import json
 
@@ -29,14 +28,19 @@ app = FastAPI(
 
 DATA_FILE = Path(__file__).resolve().parent / "patient.json"
 
-class Patient(BaseModel):
-    id: Annotated[str, Field(..., description='ID of the patient', examples=['P001'])]
+class MessageResponse(BaseModel):
+    message: str = Field(..., description="Status or information message")
+
+class PatientBase(BaseModel):
     name: str = Field(..., description="Full name of the patient", examples=["Aman Gupta"])
     city: str = Field(..., description="City of residence", examples=["Jaipur"])
     age: Annotated[int, Field(..., gt=0, lt=120, description='Age of the patient in years', examples=[38])]
     gender: Annotated[Literal['male', 'female', 'others'], Field(..., description='Gender of the patient')]
     height: Annotated[float, Field(..., gt=0, description='Height of the patient in meters', examples=[1.78])]
     weight: Annotated[float, Field(..., gt=0, description='Weight of the patient in kilograms', examples=[78.0])]
+
+class Patient(PatientBase):
+    id: Annotated[str, Field(..., description='ID of the patient', examples=['P001'])]
 
     @computed_field
     @property
@@ -56,6 +60,10 @@ class Patient(BaseModel):
             return "Overweight"
         else:
             return "Obese"
+
+class PatientResponse(PatientBase):
+    bmi: float = Field(..., description="Calculated Body Mass Index")
+    verdict: str = Field(..., description="Health classification verdict")
 
 class PatientUpdate(BaseModel):  
     name: Annotated[Optional[str], Field(default=None, description="Updated patient name")]
@@ -80,30 +88,30 @@ def save_data(data: dict) -> None:
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4)
 
-@app.get("/", tags=["General"], summary="Welcome Endpoint")
+@app.get("/", response_model=MessageResponse, tags=["General"], summary="Welcome Endpoint")
 def hello():
     """Returns a welcome message indicating the status of the API."""
     return {"message": "Patient management system API"}
 
-@app.get('/about', tags=["General"], summary="API Overview")
+@app.get('/about', response_model=MessageResponse, tags=["General"], summary="API Overview")
 def about():
     """Provides high-level information about the API and its capabilities."""
     return {"message": "Fully functional api to manage records"}
 
-@app.get('/view', tags=["Patients"], summary="Get All Patients")
+@app.get('/view', response_model=Dict[str, PatientResponse], tags=["Patients"], summary="Get All Patients")
 def view():
     """Retrieve all patient records currently saved in the database."""
     return load_data()
 
-@app.get('/patient/{patient_id}', tags=["Patients"], summary="Get Patient by ID")
+@app.get('/patient/{patient_id}', response_model=PatientResponse, tags=["Patients"], summary="Get Patient by ID")
 def view_patient(patient_id: str = Path(..., description='Unique ID of the patient', example='P001')):
     """Retrieve complete profile and health metrics of a specific patient."""
     data = load_data()
     if patient_id in data:
         return data[patient_id]
-    raise HTTPException(status_code=404, detail="Patient not found")
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
-@app.get('/sort', tags=["Patients"], summary="Sort Patients by Metric")
+@app.get('/sort', response_model=List[PatientResponse], tags=["Patients"], summary="Sort Patients by Metric")
 def sort_patients(
     sort_by: str = Query(..., description="Attribute to sort by: height, weight, or bmi"),
     order: str = Query('asc', description='Sorting order: asc (ascending) or desc (descending)')
@@ -113,13 +121,13 @@ def sort_patients(
 
     if sort_by not in valid_fields:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=f'Invalid Field select from {valid_fields}'
         )
 
     if order not in ['asc', 'desc']:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail='Invalid order select between asc and desc'
         )
 
@@ -134,24 +142,24 @@ def sort_patients(
 
     return sorted_data
 
-@app.post('/create', tags=["Patients"], summary="Create New Patient")
+@app.post('/create', response_model=MessageResponse, status_code=status.HTTP_201_CREATED, tags=["Patients"], summary="Create New Patient")
 def create_patient(patient: Patient):
     """Register a new patient, calculate initial BMI and verdict, and store in the database."""
     data = load_data()
     if patient.id in data:
-        raise HTTPException(status_code=400, detail='Patient already exists')
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Patient already exists')
 
     data[patient.id] = patient.model_dump(exclude={'id'})
     save_data(data)
 
-    return JSONResponse(status_code=201, content={'message': 'patient created successfully'})
+    return {"message": "patient created successfully"}
 
-@app.put('/edit/{patient_id}', tags=["Patients"], summary="Update Patient Details")
+@app.put('/edit/{patient_id}', response_model=MessageResponse, status_code=status.HTTP_200_OK, tags=["Patients"], summary="Update Patient Details")
 def update_patient(patient_id: str, patient_update: PatientUpdate):
     """Partially update an existing patient's details and automatically recalculate BMI and verdict."""
     data = load_data()
     if patient_id not in data:
-        raise HTTPException(status_code=404, detail="Patient not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
 
     existing_patient_info = data[patient_id]
     updated_patient_info = patient_update.model_dump(exclude_unset=True)
@@ -166,15 +174,15 @@ def update_patient(patient_id: str, patient_update: PatientUpdate):
     data[patient_id] = existing_patient_info
     save_data(data)
 
-    return JSONResponse(status_code=200, content={"message": 'patient updated'})
+    return {"message": "patient updated"}
 
-@app.delete('/delete/{patient_id}', tags=["Patients"], summary="Delete Patient Record")
+@app.delete('/delete/{patient_id}', response_model=MessageResponse, status_code=status.HTTP_200_OK, tags=["Patients"], summary="Delete Patient Record")
 def delete_patient(patient_id: str):
     """Delete a patient record by ID from the database."""
     data = load_data()
     if patient_id not in data:
-        raise HTTPException(status_code=404, detail='Patient not found')
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Patient not found')
 
     del data[patient_id]
     save_data(data)
-    return JSONResponse(status_code=200, content={'message': "patient deleted"})
+    return {"message": "patient deleted"}
