@@ -65,6 +65,15 @@ class PatientResponse(PatientBase):
     bmi: float = Field(..., description="Calculated Body Mass Index")
     verdict: str = Field(..., description="Health classification verdict")
 
+class PatientRecord(PatientResponse):
+    id: str = Field(..., description="Unique patient identifier")
+
+class PaginatedPatientsResponse(BaseModel):
+    total: int = Field(..., description="Total matching patients found")
+    limit: int = Field(..., description="Number of items returned")
+    offset: int = Field(..., description="Number of items skipped")
+    patients: List[PatientRecord] = Field(..., description="List of matching patient records")
+
 class PatientUpdate(BaseModel):  
     name: Annotated[Optional[str], Field(default=None, description="Updated patient name")]
     city: Annotated[Optional[str], Field(default=None, description="Updated patient city")]
@@ -141,6 +150,45 @@ def sort_patients(
     )
 
     return sorted_data
+
+@app.get('/patients/search', response_model=PaginatedPatientsResponse, tags=["Patients"], summary="Search & Filter Patients")
+def search_patients(
+    city: Optional[str] = Query(None, description="Filter by city name (case-insensitive)"),
+    gender: Optional[Literal['male', 'female', 'others']] = Query(None, description="Filter by patient gender"),
+    min_age: Optional[int] = Query(None, ge=1, le=120, description="Minimum age filter"),
+    max_age: Optional[int] = Query(None, ge=1, le=120, description="Maximum age filter"),
+    verdict: Optional[str] = Query(None, description="Filter by verdict (e.g. Normal, Obese, Underweight, Overweight)"),
+    limit: int = Query(10, ge=1, le=100, description="Number of results per page"),
+    offset: int = Query(0, ge=0, description="Offset for pagination")
+):
+    """Search and filter patient records by multiple parameters with pagination support."""
+    data = load_data()
+    filtered: List[PatientRecord] = []
+
+    for pid, pdata in data.items():
+        if city and pdata.get("city", "").lower() != city.lower():
+            continue
+        if gender and pdata.get("gender") != gender:
+            continue
+        if min_age and pdata.get("age", 0) < min_age:
+            continue
+        if max_age and pdata.get("age", 0) > max_age:
+            continue
+        if verdict and pdata.get("verdict", "").lower() != verdict.lower():
+            continue
+
+        record_data = {**pdata, "id": pid}
+        filtered.append(PatientRecord(**record_data))
+
+    total = len(filtered)
+    paginated = filtered[offset : offset + limit]
+
+    return PaginatedPatientsResponse(
+        total=total,
+        limit=limit,
+        offset=offset,
+        patients=paginated
+    )
 
 @app.post('/create', response_model=MessageResponse, status_code=status.HTTP_201_CREATED, tags=["Patients"], summary="Create New Patient")
 def create_patient(patient: Patient):
