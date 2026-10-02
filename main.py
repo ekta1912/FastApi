@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Path, HTTPException, Query, status
 from pydantic import BaseModel, Field, computed_field
 from typing import Annotated, Literal, Optional, Dict, List
-from pathlib import Path
+from pathlib import Path as FilePath
 import json
 
 tags_metadata = [
@@ -30,7 +30,7 @@ app = FastAPI(
     },
 )
 
-DATA_FILE = Path(__file__).resolve().parent / "patient.json"
+DATA_FILE = FilePath(__file__).resolve().parent / "patient.json"
 
 class MessageResponse(BaseModel):
     message: str = Field(..., description="Status or information message")
@@ -146,7 +146,7 @@ def view():
     return load_data()
 
 @app.get('/patient/{patient_id}', response_model=PatientResponse, tags=["Patients"], summary="Get Patient by ID")
-def view_patient(patient_id: str = Path(..., description='Unique ID of the patient', example='P001')):
+def view_patient(patient_id: str = Path(..., description='Unique ID of the patient', examples=['P001'])):
     """Retrieve complete profile and health metrics of a specific patient."""
     data = load_data()
     if patient_id in data:
