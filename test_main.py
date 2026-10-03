@@ -210,5 +210,29 @@ def test_export_patients_csv():
     assert p001_row is not None
     assert p001_row[1] == "Ananya Sharma"
 
+def test_risk_assessment_endpoint():
+    response = client.get("/analytics/risk-assessment")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_assessed"] > 0
+    assert "risk_breakdown" in data
+    assert "high_risk_percentage" in data
+    assert len(data["patients"]) == data["total_assessed"]
+    
+    # Check fields of patient profile
+    first_patient = data["patients"][0]
+    assert "risk_level" in first_patient
+    assert first_patient["risk_level"] in ["Low", "Moderate", "High", "Critical"]
+    assert isinstance(first_patient["risk_factors"], list)
+
+def test_high_risk_patients_endpoint():
+    response = client.get("/patients/high-risk")
+    assert response.status_code == 200
+    patients = response.json()
+    assert isinstance(patients, list)
+    for p in patients:
+        assert p["risk_level"] in ["High", "Critical"]
+
+
 
 

@@ -125,6 +125,22 @@ class PaginatedPatientsResponse(BaseModel):
     offset: int = Field(..., description="Number of items skipped")
     patients: List[PatientRecord] = Field(..., description="List of matching patient records")
 
+class PatientRiskProfile(BaseModel):
+    id: str = Field(..., description="Unique patient identifier")
+    name: str = Field(..., description="Patient name")
+    age: int = Field(..., description="Patient age")
+    bmi: float = Field(..., description="Calculated Body Mass Index")
+    verdict: str = Field(..., description="Health classification")
+    risk_level: Literal["Low", "Moderate", "High", "Critical"] = Field(..., description="Stratified health risk level")
+    risk_factors: List[str] = Field(..., description="Identified risk factors contributing to the score")
+
+class RiskAssessmentResponse(BaseModel):
+    total_assessed: int = Field(..., description="Total patients assessed")
+    risk_breakdown: Dict[str, int] = Field(..., description="Count of patients per risk tier")
+    high_risk_percentage: float = Field(..., description="Percentage of patients in High or Critical tier")
+    patients: List[PatientRiskProfile] = Field(..., description="List of individual patient risk assessments")
+
+
 class PatientUpdate(BaseModel):  
     name: Annotated[Optional[str], Field(default=None, description="Updated patient name")]
     city: Annotated[Optional[str], Field(default=None, description="Updated patient city")]
@@ -332,6 +348,92 @@ def get_analytics_summary():
         gender_distribution=gender_dist,
         verdict_distribution=verdict_dist
     )
+
+def evaluate_patient_risk(pid: str, pdata: dict) -> PatientRiskProfile:
+    """Evaluate clinical risk level and risk factors based on age and BMI."""
+    age = pdata.get("age", 0)
+    bmi = pdata.get("bmi", 0.0)
+    verdict = pdata.get("verdict", "")
+    factors = []
+    score = 0
+
+    if bmi >= 35.0:
+        factors.append("Severe Obesity (BMI >= 35)")
+        score += 3
+    elif bmi >= 30.0:
+        factors.append("Obesity (BMI >= 30)")
+        score += 2
+    elif bmi < 18.5 and bmi > 0:
+        factors.append("Underweight Malnutrition Risk (BMI < 18.5)")
+        score += 1
+
+    if age >= 65:
+        factors.append("Geriatric Vulnerability (Age >= 65)")
+        score += 2
+    elif age >= 50:
+        factors.append("Elevated Age Factor (Age >= 50)")
+        score += 1
+
+    if score >= 4:
+        risk_level = "Critical"
+    elif score >= 2:
+        risk_level = "High"
+    elif score == 1:
+        risk_level = "Moderate"
+    else:
+        risk_level = "Low"
+
+    return PatientRiskProfile(
+        id=pid,
+        name=pdata.get("name", "Unknown"),
+        age=age,
+        bmi=bmi,
+        verdict=verdict,
+        risk_level=risk_level,
+        risk_factors=factors
+    )
+
+@app.get('/analytics/risk-assessment', response_model=RiskAssessmentResponse, tags=["Analytics"], summary="Clinical Health Risk Assessment")
+def get_risk_assessment():
+    """Calculate clinical risk tier stratification and factor analysis across all registered patients."""
+    data = load_data()
+    total = len(data)
+    if total == 0:
+        return RiskAssessmentResponse(
+            total_assessed=0,
+            risk_breakdown={"Low": 0, "Moderate": 0, "High": 0, "Critical": 0},
+            high_risk_percentage=0.0,
+            patients=[]
+        )
+
+    breakdown = {"Low": 0, "Moderate": 0, "High": 0, "Critical": 0}
+    assessed_patients: List[PatientRiskProfile] = []
+
+    for pid, pdata in data.items():
+        profile = evaluate_patient_risk(pid, pdata)
+        assessed_patients.append(profile)
+        breakdown[profile.risk_level] = breakdown.get(profile.risk_level, 0) + 1
+
+    high_risk_count = breakdown.get("High", 0) + breakdown.get("Critical", 0)
+    high_risk_percentage = round((high_risk_count / total) * 100, 2)
+
+    return RiskAssessmentResponse(
+        total_assessed=total,
+        risk_breakdown=breakdown,
+        high_risk_percentage=high_risk_percentage,
+        patients=assessed_patients
+    )
+
+@app.get('/patients/high-risk', response_model=List[PatientRiskProfile], tags=["Patients"], summary="Get High-Risk Patients")
+def get_high_risk_patients():
+    """Retrieve all patients classified in High or Critical health risk categories for prioritized medical attention."""
+    data = load_data()
+    high_risk: List[PatientRiskProfile] = []
+    for pid, pdata in data.items():
+        profile = evaluate_patient_risk(pid, pdata)
+        if profile.risk_level in ["High", "Critical"]:
+            high_risk.append(profile)
+    return high_risk
 
 @app.post('/create', response_model=MessageResponse, status_code=status.HTTP_201_CREATED, tags=["Patients"], summary="Create New Patient")
 def create_patient(patient: Patient):
