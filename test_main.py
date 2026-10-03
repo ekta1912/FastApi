@@ -191,4 +191,24 @@ def test_cors_and_process_time_headers():
     assert float(response.headers["x-process-time"]) >= 0.0
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
+def test_export_patients_csv():
+    import csv
+    import io
+    response = client.get("/patients/export/csv")
+    assert response.status_code == 200
+    assert "text/csv" in response.headers["content-type"]
+    assert "patients_export.csv" in response.headers["content-disposition"]
+    
+    csv_reader = csv.reader(io.StringIO(response.text))
+    rows = list(csv_reader)
+    assert len(rows) >= 2  # Header + at least 1 record
+    headers = rows[0]
+    assert headers == ["id", "name", "city", "age", "gender", "height", "weight", "bmi", "verdict"]
+    
+    # Check that P001 is included
+    p001_row = next((r for r in rows[1:] if r[0] == "P001"), None)
+    assert p001_row is not None
+    assert p001_row[1] == "Ananya Sharma"
+
+
 

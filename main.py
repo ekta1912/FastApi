@@ -1,10 +1,13 @@
 from fastapi import FastAPI, Path, HTTPException, Query, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, computed_field
 from typing import Annotated, Literal, Optional, Dict, List
 from pathlib import Path as FilePath
 import json
 import time
+import csv
+import io
 
 from config import get_settings
 
@@ -249,6 +252,43 @@ def search_patients(
         limit=limit,
         offset=offset,
         patients=paginated
+    )
+
+@app.get(
+    '/patients/export/csv',
+    tags=["Patients"],
+    summary="Export Patients as CSV",
+    response_description="A downloadable CSV file containing all registered patient records and computed metrics."
+)
+def export_patients_csv():
+    """Stream and export all patient records in standard CSV format with BMI and health verdicts."""
+    data = load_data()
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write CSV headers
+    headers = ["id", "name", "city", "age", "gender", "height", "weight", "bmi", "verdict"]
+    writer.writerow(headers)
+
+    # Write patient rows
+    for pid, pdata in data.items():
+        writer.writerow([
+            pid,
+            pdata.get("name", ""),
+            pdata.get("city", ""),
+            pdata.get("age", ""),
+            pdata.get("gender", ""),
+            pdata.get("height", ""),
+            pdata.get("weight", ""),
+            pdata.get("bmi", ""),
+            pdata.get("verdict", "")
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="patients_export.csv"'}
     )
 
 @app.get('/analytics/summary', response_model=AnalyticsSummaryResponse, tags=["Analytics"], summary="Population Health Summary")
