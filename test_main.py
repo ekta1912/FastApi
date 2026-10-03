@@ -21,8 +21,18 @@ def test_health_check():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
+    assert "environment" in data
+    assert "version" in data
     assert data["total_records"] >= 0
     assert data["storage_active"] is True
+
+def test_settings_configuration():
+    from config import get_settings
+    settings = get_settings()
+    assert settings.app_name == "Patient Management System API"
+    assert settings.app_version == "1.0.0"
+    assert isinstance(settings.cors_origins, list)
+
 
 def test_about_endpoint():
     response = client.get("/about")

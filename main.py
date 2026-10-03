@@ -6,6 +6,10 @@ from pathlib import Path as FilePath
 import json
 import time
 
+from config import get_settings
+
+settings = get_settings()
+
 tags_metadata = [
     {
         "name": "General",
@@ -22,19 +26,19 @@ tags_metadata = [
 ]
 
 app = FastAPI(
-    title="Patient Management System API",
-    description="A high-performance RESTful API built with FastAPI and Pydantic for managing patient records, calculating real-time BMI metrics, and evaluating health statuses.",
-    version="1.0.0",
+    title=settings.app_name,
+    description=settings.app_description,
+    version=settings.app_version,
     openapi_tags=tags_metadata,
     contact={
-        "name": "Ekta Singh",
-        "email": "ektasingh19.12.2004@gmail.com",
+        "name": settings.contact_name,
+        "email": settings.contact_email,
     },
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,7 +53,7 @@ async def add_process_time_header(request: Request, call_next):
     response.headers["X-Process-Time"] = f"{process_time:.6f}"
     return response
 
-DATA_FILE = FilePath(__file__).resolve().parent / "patient.json"
+DATA_FILE = settings.data_file_path
 
 class MessageResponse(BaseModel):
     message: str = Field(..., description="Status or information message")
@@ -61,6 +65,8 @@ class BatchCreateResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str = Field(..., description="API operational health status")
+    environment: str = Field(..., description="Application execution environment")
+    version: str = Field(..., description="API semantic version")
     total_records: int = Field(..., description="Total patient records loaded in storage")
     storage_active: bool = Field(..., description="Storage file accessibility status")
 
@@ -150,9 +156,12 @@ def health_check():
     data = load_data()
     return HealthResponse(
         status="healthy",
+        environment=settings.environment,
+        version=settings.app_version,
         total_records=len(data),
         storage_active=DATA_FILE.exists()
     )
+
 
 @app.get('/about', response_model=MessageResponse, tags=["General"], summary="API Overview")
 def about():
