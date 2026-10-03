@@ -1,8 +1,10 @@
-from fastapi import FastAPI, Path, HTTPException, Query, status
+from fastapi import FastAPI, Path, HTTPException, Query, status, Request
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, computed_field
 from typing import Annotated, Literal, Optional, Dict, List
 from pathlib import Path as FilePath
 import json
+import time
 
 tags_metadata = [
     {
@@ -29,6 +31,23 @@ app = FastAPI(
         "email": "ektasingh19.12.2004@gmail.com",
     },
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["X-Process-Time"],
+)
+
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    start_time = time.perf_counter()
+    response = await call_next(request)
+    process_time = time.perf_counter() - start_time
+    response.headers["X-Process-Time"] = f"{process_time:.6f}"
+    return response
 
 DATA_FILE = FilePath(__file__).resolve().parent / "patient.json"
 
