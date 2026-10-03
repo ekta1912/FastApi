@@ -284,6 +284,79 @@ def test_custom_exception_envelopes():
     assert data_400["error_code"] == "INVALID_QUERY_PARAMETER"
     assert "timestamp" in data_400
 
+def test_search_patients_with_combined_filters():
+    response = client.get("/patients/search?gender=female&min_age=20&max_age=50")
+    assert response.status_code == 200
+    data = response.json()
+    assert "patients" in data
+    for p in data["patients"]:
+        assert p["gender"] == "female"
+        assert 20 <= p["age"] <= 50
+
+def test_search_patients_no_results():
+    response = client.get("/patients/search?city=AtlantisUnderwater")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total"] == 0
+    assert len(data["patients"]) == 0
+
+def test_batch_create_empty_list():
+    res = client.post("/batch-create", json=[])
+    assert res.status_code == 400
+    assert "cannot be empty" in res.json()["detail"]
+
+def test_batch_create_intra_batch_duplicates():
+    dup_batch = [
+        {
+            "id": "DUP_ID_01",
+            "name": "Person One",
+            "city": "Delhi",
+            "age": 25,
+            "gender": "male",
+            "height": 1.70,
+            "weight": 65.0
+        },
+        {
+            "id": "DUP_ID_01",
+            "name": "Person Two",
+            "city": "Mumbai",
+            "age": 30,
+            "gender": "female",
+            "height": 1.65,
+            "weight": 55.0
+        }
+    ]
+    res = client.post("/batch-create", json=dup_batch)
+    assert res.status_code == 400
+    assert "Duplicate patient IDs" in res.json()["detail"]
+
+def test_batch_create_existing_conflict():
+    conflict_batch = [
+        {
+            "id": "P001",
+            "name": "Conflicting Record",
+            "city": "Kolkata",
+            "age": 40,
+            "gender": "male",
+            "height": 1.80,
+            "weight": 80.0
+        }
+    ]
+    res = client.post("/batch-create", json=conflict_batch)
+    assert res.status_code == 400
+    assert "already exist" in res.json()["detail"]
+
+def test_edit_patient_not_found():
+    res = client.put("/edit/NON_EXISTENT_PATIENT_999", json={"age": 45})
+    assert res.status_code == 404
+    assert res.json()["error_code"] == "PATIENT_NOT_FOUND"
+
+def test_delete_patient_not_found():
+    res = client.delete("/delete/NON_EXISTENT_PATIENT_999")
+    assert res.status_code == 404
+    assert res.json()["error_code"] == "PATIENT_NOT_FOUND"
+
+
 
 
 
