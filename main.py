@@ -8,6 +8,7 @@ import json
 import time
 import csv
 import io
+from datetime import datetime
 
 from config import get_settings
 
@@ -25,6 +26,10 @@ tags_metadata = [
     {
         "name": "Analytics",
         "description": "Statistical aggregation and population health analysis.",
+    },
+    {
+        "name": "Admin",
+        "description": "Administrative maintenance, data snapshotting, and restoration operations.",
     },
 ]
 
@@ -57,9 +62,32 @@ async def add_process_time_header(request: Request, call_next):
     return response
 
 DATA_FILE = settings.data_file_path
+BACKUP_DIR = DATA_FILE.parent / "backups"
+
+class BackupInfo(BaseModel):
+    filename: str = Field(..., description="Backup filename")
+    created_at: str = Field(..., description="ISO 8601 timestamp of creation")
+    record_count: int = Field(..., description="Total patient records in the backup")
+    file_size_bytes: int = Field(..., description="Backup file size in bytes")
+
+class BackupResponse(BaseModel):
+    message: str = Field(..., description="Operation status")
+    backup: BackupInfo = Field(..., description="Metadata of the created backup")
+
+class BackupListResponse(BaseModel):
+    total_backups: int = Field(..., description="Count of stored backups")
+    backups: List[BackupInfo] = Field(..., description="Available database backups")
+
+class RestoreRequest(BaseModel):
+    filename: str = Field(..., description="Name of the backup file to restore from")
+
+class RestoreResponse(BaseModel):
+    message: str = Field(..., description="Status message")
+    restored_records: int = Field(..., description="Count of restored patient records")
 
 class MessageResponse(BaseModel):
     message: str = Field(..., description="Status or information message")
+
 
 class BatchCreateResponse(BaseModel):
     message: str = Field(..., description="Status message")
@@ -515,3 +543,81 @@ def delete_patient(patient_id: str):
     del data[patient_id]
     save_data(data)
     return {"message": "patient deleted"}
+
+@app.post('/admin/backup', response_model=BackupResponse, status_code=status.HTTP_201_CREATED, tags=["Admin"], summary="Create Database Backup")
+def create_backup():
+    """Create a point-in-time timestamped JSON snapshot of all patient records."""
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    data = load_data()
+    now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_filename = f"backup_{now_str}.json"
+    backup_path = BACKUP_DIR / backup_filename
+
+    with open(backup_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=4)
+
+    stat = backup_path.stat()
+    backup_info = BackupInfo(
+        filename=backup_filename,
+        created_at=datetime.fromtimestamp(stat.st_ctime).isoformat(),
+        record_count=len(data),
+        file_size_bytes=stat.st_size
+    )
+
+    return BackupResponse(
+        message="Database backup created successfully",
+        backup=backup_info
+    )
+
+@app.get('/admin/backups', response_model=BackupListResponse, tags=["Admin"], summary="List Available Backups")
+def list_backups():
+    """List all available historical backup snapshots in storage."""
+    if not BACKUP_DIR.exists():
+        return BackupListResponse(total_backups=0, backups=[])
+
+    backups = []
+    for file in sorted(BACKUP_DIR.glob("backup_*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+        try:
+            with open(file, 'r', encoding='utf-8') as f:
+                content = json.load(f)
+                count = len(content) if isinstance(content, dict) else 0
+        except Exception:
+            count = 0
+        stat = file.stat()
+        backups.append(BackupInfo(
+            filename=file.name,
+            created_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            record_count=count,
+            file_size_bytes=stat.st_size
+        ))
+
+    return BackupListResponse(
+        total_backups=len(backups),
+        backups=backups
+    )
+
+@app.post('/admin/restore', response_model=RestoreResponse, tags=["Admin"], summary="Restore Database from Backup")
+def restore_backup(request: RestoreRequest):
+    """Restore database state from a specified valid backup snapshot."""
+    import os
+    safe_filename = os.path.basename(request.filename)
+    backup_path = (BACKUP_DIR / safe_filename).resolve()
+
+    if not backup_path.is_relative_to(BACKUP_DIR.resolve()) or not backup_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Backup file '{safe_filename}' not found")
+
+    try:
+        with open(backup_path, 'r', encoding='utf-8') as f:
+            backup_data = json.load(f)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Corrupt backup file: {str(e)}")
+
+    if not isinstance(backup_data, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid backup file structure: expected dict")
+
+    save_data(backup_data)
+    return RestoreResponse(
+        message=f"Database successfully restored from '{safe_filename}'",
+        restored_records=len(backup_data)
+    )
+

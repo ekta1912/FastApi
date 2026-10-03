@@ -233,6 +233,41 @@ def test_high_risk_patients_endpoint():
     for p in patients:
         assert p["risk_level"] in ["High", "Critical"]
 
+def test_admin_backup_and_restore_workflow():
+    from main import BACKUP_DIR
+    import os
+    
+    # 1. Create backup
+    res = client.post("/admin/backup")
+    assert res.status_code == 201
+    backup_data = res.json()
+    assert "backup" in backup_data
+    filename = backup_data["backup"]["filename"]
+    assert filename.startswith("backup_")
+    assert backup_data["backup"]["record_count"] >= 0
+
+    # 2. List backups
+    list_res = client.get("/admin/backups")
+    assert list_res.status_code == 200
+    listed = list_res.json()
+    assert listed["total_backups"] >= 1
+    assert any(b["filename"] == filename for b in listed["backups"])
+
+    # 3. Restore from backup
+    restore_res = client.post("/admin/restore", json={"filename": filename})
+    assert restore_res.status_code == 200
+    assert "restored_records" in restore_res.json()
+
+    # 4. Restore from non-existent backup
+    fail_res = client.post("/admin/restore", json={"filename": "non_existent_file.json"})
+    assert fail_res.status_code == 404
+
+    # Cleanup backup file created
+    target_file = BACKUP_DIR / filename
+    if target_file.exists():
+        os.remove(target_file)
+
+
 
 
 
