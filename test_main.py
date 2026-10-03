@@ -267,6 +267,24 @@ def test_admin_backup_and_restore_workflow():
     if target_file.exists():
         os.remove(target_file)
 
+def test_custom_exception_envelopes():
+    # Test 404 Patient Not Found envelope
+    res_404 = client.get("/patient/NON_EXISTENT_ID")
+    assert res_404.status_code == 404
+    data_404 = res_404.json()
+    assert data_404["detail"] == "Patient not found"
+    assert data_404["error_code"] == "PATIENT_NOT_FOUND"
+    assert "timestamp" in data_404
+
+    # Test 400 Invalid Query Parameter envelope
+    res_400 = client.get("/sort?sort_by=invalid_col&order=asc")
+    assert res_400.status_code == 400
+    data_400 = res_400.json()
+    assert "Invalid Field" in data_400["detail"]
+    assert data_400["error_code"] == "INVALID_QUERY_PARAMETER"
+    assert "timestamp" in data_400
+
+
 
 
 

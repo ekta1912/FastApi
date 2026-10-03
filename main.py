@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Path, HTTPException, Query, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, computed_field
 from typing import Annotated, Literal, Optional, Dict, List
 from pathlib import Path as FilePath
@@ -11,6 +11,7 @@ import io
 from datetime import datetime
 
 from config import get_settings
+from exceptions import PatientNotFoundError, PatientAlreadyExistsError, InvalidQueryParameterError
 
 settings = get_settings()
 
@@ -60,6 +61,40 @@ async def add_process_time_header(request: Request, call_next):
     process_time = time.perf_counter() - start_time
     response.headers["X-Process-Time"] = f"{process_time:.6f}"
     return response
+
+@app.exception_handler(PatientNotFoundError)
+async def patient_not_found_handler(request: Request, exc: PatientNotFoundError):
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={
+            "detail": exc.message,
+            "error_code": exc.error_code,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
+@app.exception_handler(PatientAlreadyExistsError)
+async def patient_already_exists_handler(request: Request, exc: PatientAlreadyExistsError):
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "detail": exc.message,
+            "error_code": exc.error_code,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
+@app.exception_handler(InvalidQueryParameterError)
+async def invalid_query_parameter_handler(request: Request, exc: InvalidQueryParameterError):
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "detail": exc.message,
+            "error_code": exc.error_code,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
 
 DATA_FILE = settings.data_file_path
 BACKUP_DIR = DATA_FILE.parent / "backups"
@@ -226,7 +261,7 @@ def view_patient(patient_id: str = Path(..., description='Unique ID of the patie
     data = load_data()
     if patient_id in data:
         return data[patient_id]
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+    raise PatientNotFoundError("Patient not found")
 
 @app.get('/sort', response_model=List[PatientResponse], tags=["Patients"], summary="Sort Patients by Metric")
 def sort_patients(
@@ -237,16 +272,11 @@ def sort_patients(
     valid_fields = ['height', 'weight', 'bmi']
 
     if sort_by not in valid_fields:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f'Invalid Field select from {valid_fields}'
-        )
+        raise InvalidQueryParameterError(f'Invalid Field select from {valid_fields}')
 
     if order not in ['asc', 'desc']:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Invalid order select between asc and desc'
-        )
+        raise InvalidQueryParameterError('Invalid order select between asc and desc')
+
 
     data = load_data()
     sort_order = True if order == 'desc' else False
@@ -468,7 +498,7 @@ def create_patient(patient: Patient):
     """Register a new patient, calculate initial BMI and verdict, and store in the database."""
     data = load_data()
     if patient.id in data:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Patient already exists')
+        raise PatientAlreadyExistsError('Patient already exists')
 
     data[patient.id] = patient.model_dump(exclude={'id'})
     save_data(data)
@@ -516,7 +546,7 @@ def update_patient(patient_id: str, patient_update: PatientUpdate):
     """Partially update an existing patient's details and automatically recalculate BMI and verdict."""
     data = load_data()
     if patient_id not in data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient not found")
+        raise PatientNotFoundError("Patient not found")
 
     existing_patient_info = data[patient_id]
     updated_patient_info = patient_update.model_dump(exclude_unset=True)
@@ -538,11 +568,12 @@ def delete_patient(patient_id: str):
     """Delete a patient record by ID from the database."""
     data = load_data()
     if patient_id not in data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Patient not found')
+        raise PatientNotFoundError('Patient not found')
 
     del data[patient_id]
     save_data(data)
     return {"message": "patient deleted"}
+
 
 @app.post('/admin/backup', response_model=BackupResponse, status_code=status.HTTP_201_CREATED, tags=["Admin"], summary="Create Database Backup")
 def create_backup():
