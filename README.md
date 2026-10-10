@@ -7,7 +7,7 @@
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-A production-ready, high-performance RESTful API built with **FastAPI** and **Pydantic v2** for managing patient health records, calculating real-time clinical metrics (BMI and WHO health verdicts), evaluating cardiovascular/metabolic risk profiles, and performing point-in-time database backups.
+A production-ready, high-performance RESTful API built with **FastAPI** and **Pydantic v2** for managing patient health records, logging clinical vital signs (blood pressure, heart rate, SpO2), calculating real-time clinical metrics (BMI, WHO verdicts, AHA blood pressure stages), evaluating cardiovascular/metabolic risk profiles, and performing secured database administration and disaster recovery.
 
 ---
 
@@ -19,28 +19,32 @@ flowchart TD
     
     subgraph FastAPI App ["FastAPI Application"]
         CORS["CORS Middleware"]
-        Timer["Process Time Middleware (X-Process-Time)"]
-        Exc["Domain Exception Handlers"]
+        Tracing["Tracing & Latency Middleware (X-Request-ID, X-Process-Time)"]
+        SecurityLayer["API Key Security (X-API-Key)"]
+        Exc["Domain Exception Envelopes"]
         
         subgraph Endpoints ["API Route Handlers"]
             General["General / Health / Info"]
-            Patients["Patients CRUD / Sort / Filter / Export"]
-            Analytics["Analytics Summary / Risk Stratification"]
-            Admin["Admin Backups & Disaster Recovery"]
+            Patients["Patients CRUD / Search / Sort / Vitals / Import-Export"]
+            Analytics["Population Analytics / Risk Stratification / Demographics"]
+            Admin["Admin Backups / Integrity Audit / DB Compaction"]
         end
         
-        Pydantic["Pydantic v2 Models & Computed Fields (BMI / Verdict)"]
+        Models["Modular Pydantic v2 Models & Computed Fields (models.py)"]
         Config["Configuration Management (config.py)"]
+        AuditLog["Structured Request Audit Logger"]
     end
     
     Storage[("Local JSON Storage (patient.json)")]
     Backups[("Point-in-Time Backups (/backups/)")]
     
     Client --> CORS
-    CORS --> Timer
-    Timer --> Exc
+    CORS --> Tracing
+    Tracing --> AuditLog
+    Tracing --> SecurityLayer
+    SecurityLayer --> Exc
     Exc --> Endpoints
-    Endpoints --> Pydantic
+    Endpoints --> Models
     Endpoints --> Config
     Endpoints --> Storage
     Endpoints --> Backups
@@ -51,18 +55,24 @@ flowchart TD
 ## 🚀 Key Features
 
 - **Full Patient Lifecycle Management (CRUD)**: Create, view, update, and delete patient records with unique identifiers and type-safe validation.
+- **Clinical Profile & Medical History**: Track blood group (`A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+`, `O-`), allergies, and documented chronic conditions.
+- **Vital Signs & Blood Pressure Classification**: Record timestamped patient vitals (systolic, diastolic, heart rate, temperature, SpO2) with automatic AHA/ACC blood pressure stage categorization (*Normal*, *Elevated*, *Hypertension Stage 1*, *Hypertension Stage 2*, *Hypertensive Crisis*).
 - **Computed Health Metrics**: Real-time Body Mass Index (BMI) and WHO health classifications (*Underweight*, *Normal*, *Overweight*, *Obese*) computed automatically via `@computed_field`.
 - **Clinical Risk Assessment**: Stratifies patients into clinical risk categories (*Low*, *Moderate*, *High*, *Critical*) based on age and BMI vulnerability factors.
-- **High-Risk Filtering**: Dedicated clinical triage endpoint (`/patients/high-risk`) to quickly isolate vulnerable patients.
-- **CSV Data Streaming & Export**: Export the entire patient registry directly as a downloadable CSV file (`/patients/export/csv`).
-- **Administrative Backups & Recovery**: Create point-in-time JSON snapshots (`/admin/backup`), list existing backups, and restore the database seamlessly with path security verification.
-- **Atomic Batch Registration**: Bulk register patient records in a single transactional operation with intra-batch duplicate detection.
-- **Advanced Multi-Criteria Search & Pagination**: Query patients by city, gender, age range, and BMI verdict with `limit` and `offset` support.
-- **Dynamic Metric Sorting**: Sort patient registries dynamically by height, weight, or calculated BMI in ascending or descending order.
-- **Enterprise Middleware**:
+- **Population Demographics & Regional Metrics**: Endpoint (`/analytics/demographics`) breaking down age brackets (Pediatric, Young Adult, Adult, Senior), blood group distributions, allergy frequencies, and regional city metrics.
+- **Bulk Data Import & Export**:
+  - Export data as downloadable **CSV** (`/patients/export/csv`) or structured **JSON** (`/patients/export/json`).
+  - Bulk import patients with collision resolution strategies (*skip*, *overwrite*, *fail*).
+- **Administrative Security & Operations**:
+  - Secured via configurable **API Key Authentication** (`X-API-Key`).
+  - Create and restore point-in-time timestamped snapshots.
+  - Automated database **integrity audits** (`/admin/integrity`) to detect schema discrepancies, bounds violations, and BMI drift.
+  - Database **compaction and deterministic key sorting** (`/admin/compact`).
+- **Enterprise Middleware & Observability**:
   - Global **CORS** middleware with configurable origin whitelists.
-  - Request performance profiling with automated `X-Process-Time` response headers.
-- **Standardized Error Handling**: Custom domain exceptions (`PatientNotFoundError`, `PatientAlreadyExistsError`, `InvalidQueryParameterError`) with structured JSON error envelopes.
+  - Request correlation ID tracing (`X-Request-ID`) generated per request and propagated across response headers and error envelopes.
+  - Request latency profiling (`X-Process-Time`).
+  - Structured audit logging per request.
 - **Production Containerization**: Multi-stage `Dockerfile` and `docker-compose.yml` with built-in container healthchecks.
 - **Automated CI/CD**: Matrix testing across Python 3.10, 3.11, 3.12, and 3.13 via GitHub Actions.
 
@@ -74,7 +84,7 @@ flowchart TD
 |---|---|
 | **Python 3.10+** | Core programming language runtime |
 | **FastAPI** | High-performance asynchronous web framework |
-| **Pydantic v2** | Data modeling, validation, and settings management |
+| **Pydantic v2** | Data modeling, validation, computed fields, and settings |
 | **Uvicorn** | ASGI web server for asynchronous request dispatching |
 | **Pytest** | Automated unit and integration testing suite |
 | **HTTPX / TestClient** | Client-side test fixtures and endpoint verification |
@@ -144,6 +154,7 @@ The application uses `config.py` with environment variable overrides:
 | `APP_ENV` | `production` | Execution environment (`development`, `staging`, `production`) |
 | `APP_DEBUG` | `false` | Enable or disable debug mode |
 | `CORS_ORIGINS` | `*` | Comma-separated list of allowed origins |
+| `ADMIN_API_KEY` | `admin-secret-key-123` | Secret key required for `/admin/*` operations |
 | `DATA_FILE_PATH` | `./patient.json` | Path to the persistent JSON storage file |
 
 ---
@@ -165,29 +176,36 @@ Once the server is running, explore the interactive documentation:
 | `GET` | `/health` | System health check, active records, version, and environment |
 | `GET` | `/about` | API description and capabilities |
 
-### Patient Operations
+### Patient Operations & Vitals
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/view` | Retrieve all registered patient records |
 | `GET` | `/patient/{patient_id}` | Retrieve details and calculated metrics for a patient |
+| `POST` | `/patient/{patient_id}/vitals` | Record vital signs and calculate blood pressure classification |
+| `GET` | `/patient/{patient_id}/vitals` | Retrieve chronological vitals history for a patient |
 | `GET` | `/sort` | Sort patients by `height`, `weight`, or `bmi` (`asc` or `desc`) |
 | `GET` | `/patients/search` | Advanced multi-parameter search with pagination |
 | `GET` | `/patients/high-risk` | Retrieve patients in `High` or `Critical` risk tiers |
 | `GET` | `/patients/export/csv` | Download patient database as a formatted CSV file |
+| `GET` | `/patients/export/json` | Export patient records as structured JSON with metadata |
+| `POST` | `/patients/import/json` | Bulk import patients with collision strategy (*skip*, *overwrite*, *fail*) |
 | `POST` | `/create` | Register a new single patient record |
 | `POST` | `/batch-create` | Atomically register multiple patient records |
 | `PUT` | `/edit/{patient_id}` | Partially update patient details and recalculate metrics |
 | `DELETE` | `/delete/{patient_id}` | Remove a patient record by ID |
 
-### Population Analytics & Risk
+### Population Analytics & Demographics
 | Method | Endpoint | Description |
 |---|---|---|
 | `GET` | `/analytics/summary` | Population statistics (averages, gender & BMI distribution) |
 | `GET` | `/analytics/risk-assessment` | Clinical risk breakdown and factor analysis |
+| `GET` | `/analytics/demographics` | Age brackets, blood groups, allergy frequencies, and regional city metrics |
 
-### Administration & Backups
+### Secured Administration (Requires `X-API-Key`)
 | Method | Endpoint | Description |
 |---|---|---|
+| `GET` | `/admin/integrity` | Audit database for missing fields, bounds violations, and BMI drift |
+| `POST` | `/admin/compact` | Defragment, sort keys deterministically, and optimize JSON file |
 | `POST` | `/admin/backup` | Create a timestamped point-in-time JSON database snapshot |
 | `GET` | `/admin/backups` | List all historical backups in storage |
 | `POST` | `/admin/restore` | Restore database state from a specified backup snapshot |
@@ -203,16 +221,20 @@ Execute the comprehensive test suite with `pytest`:
 pytest test_main.py -v
 ```
 
-All 29 tests cover:
-- Core CRUD flows and validation constraints.
-- Real-time BMI and verdict computation.
-- Batch creation and duplicate detection.
-- Sorting and multi-field search with pagination.
-- Population health analytics and risk assessments.
-- CSV export streaming headers and format.
-- Administrative backup generation and restoration.
-- CORS headers and `X-Process-Time` timing middleware.
-- Structured domain exception responses (400, 404, 422).
+All 35 automated test cases verify:
+- Complete CRUD flows and boundary validations.
+- Real-time BMI and WHO verdict computation.
+- Clinical blood pressure classification across all AHA stages.
+- Patient vital sign logging and chronological history retrieval.
+- Batch creation, conflict handling, and collision strategies.
+- Dynamic sorting, multi-criteria filtering, and pagination.
+- Population health summary, risk stratification, and regional demographics.
+- CSV and JSON export streaming headers and structure.
+- Secured administrative backups, restoration, and data compaction.
+- Database integrity verification and anomaly reporting.
+- API key authentication checks (401 on unauthorized).
+- CORS headers, `X-Request-ID` correlation tracing, and `X-Process-Time` timing middleware.
+- Structured domain exception responses (`PATIENT_NOT_FOUND`, `UNAUTHORIZED_ACCESS`, etc.).
 
 ---
 
