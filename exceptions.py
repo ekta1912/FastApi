@@ -21,3 +21,9 @@ class InvalidQueryParameterError(PatientManagementException):
     """Raised when query or filter parameters fail business validation."""
     def __init__(self, message: str):
         super().__init__(message=message, error_code="INVALID_QUERY_PARAMETER")
+
+class AuthenticationError(PatientManagementException):
+    """Raised when an operation requires administrative authentication that failed or was omitted."""
+    def __init__(self, message: str = "Invalid or missing administrative API key"):
+        super().__init__(message=message, error_code="UNAUTHORIZED_ACCESS")
+

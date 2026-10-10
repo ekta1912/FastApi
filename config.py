@@ -22,6 +22,8 @@ class Settings(BaseModel):
     cors_origins: List[str] = Field(
         default_factory=lambda: [x.strip() for x in os.getenv("CORS_ORIGINS", "*").split(",") if x.strip()]
     )
+    admin_api_key: str = Field(default_factory=lambda: os.getenv("ADMIN_API_KEY", "admin-secret-key-123"))
+    api_key_header_name: str = "X-API-Key"
     contact_name: str = "Ekta Singh"
     contact_email: str = "ektasingh19.12.2004@gmail.com"
 

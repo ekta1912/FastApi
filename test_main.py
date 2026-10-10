@@ -237,8 +237,15 @@ def test_admin_backup_and_restore_workflow():
     from main import BACKUP_DIR
     import os
     
-    # 1. Create backup
-    res = client.post("/admin/backup")
+    admin_headers = {"X-API-Key": "admin-secret-key-123"}
+
+    # Unauthorized access check
+    unauth_res = client.post("/admin/backup")
+    assert unauth_res.status_code == 401
+    assert unauth_res.json()["error_code"] == "UNAUTHORIZED_ACCESS"
+
+    # 1. Create backup with valid key
+    res = client.post("/admin/backup", headers=admin_headers)
     assert res.status_code == 201
     backup_data = res.json()
     assert "backup" in backup_data
@@ -247,19 +254,19 @@ def test_admin_backup_and_restore_workflow():
     assert backup_data["backup"]["record_count"] >= 0
 
     # 2. List backups
-    list_res = client.get("/admin/backups")
+    list_res = client.get("/admin/backups", headers=admin_headers)
     assert list_res.status_code == 200
     listed = list_res.json()
     assert listed["total_backups"] >= 1
     assert any(b["filename"] == filename for b in listed["backups"])
 
     # 3. Restore from backup
-    restore_res = client.post("/admin/restore", json={"filename": filename})
+    restore_res = client.post("/admin/restore", json={"filename": filename}, headers=admin_headers)
     assert restore_res.status_code == 200
     assert "restored_records" in restore_res.json()
 
     # 4. Restore from non-existent backup
-    fail_res = client.post("/admin/restore", json={"filename": "non_existent_file.json"})
+    fail_res = client.post("/admin/restore", json={"filename": "non_existent_file.json"}, headers=admin_headers)
     assert fail_res.status_code == 404
 
     # Cleanup backup file created

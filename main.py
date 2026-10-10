@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Path, HTTPException, Query, status, Request
+from fastapi import FastAPI, Path, HTTPException, Query, status, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field, computed_field
@@ -11,7 +11,8 @@ import io
 from datetime import datetime
 
 from config import get_settings
-from exceptions import PatientNotFoundError, PatientAlreadyExistsError, InvalidQueryParameterError
+from exceptions import PatientNotFoundError, PatientAlreadyExistsError, InvalidQueryParameterError, AuthenticationError
+from security import verify_admin_key
 
 settings = get_settings()
 
@@ -94,6 +95,18 @@ async def invalid_query_parameter_handler(request: Request, exc: InvalidQueryPar
             "timestamp": datetime.now().isoformat()
         }
     )
+
+@app.exception_handler(AuthenticationError)
+async def authentication_error_handler(request: Request, exc: AuthenticationError):
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={
+            "detail": exc.message,
+            "error_code": exc.error_code,
+            "timestamp": datetime.now().isoformat()
+        }
+    )
+
 
 
 DATA_FILE = settings.data_file_path
@@ -575,7 +588,7 @@ def delete_patient(patient_id: str):
     return {"message": "patient deleted"}
 
 
-@app.post('/admin/backup', response_model=BackupResponse, status_code=status.HTTP_201_CREATED, tags=["Admin"], summary="Create Database Backup")
+@app.post('/admin/backup', response_model=BackupResponse, status_code=status.HTTP_201_CREATED, tags=["Admin"], summary="Create Database Backup", dependencies=[Security(verify_admin_key)])
 def create_backup():
     """Create a point-in-time timestamped JSON snapshot of all patient records."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -600,7 +613,7 @@ def create_backup():
         backup=backup_info
     )
 
-@app.get('/admin/backups', response_model=BackupListResponse, tags=["Admin"], summary="List Available Backups")
+@app.get('/admin/backups', response_model=BackupListResponse, tags=["Admin"], summary="List Available Backups", dependencies=[Security(verify_admin_key)])
 def list_backups():
     """List all available historical backup snapshots in storage."""
     if not BACKUP_DIR.exists():
@@ -627,7 +640,7 @@ def list_backups():
         backups=backups
     )
 
-@app.post('/admin/restore', response_model=RestoreResponse, tags=["Admin"], summary="Restore Database from Backup")
+@app.post('/admin/restore', response_model=RestoreResponse, tags=["Admin"], summary="Restore Database from Backup", dependencies=[Security(verify_admin_key)])
 def restore_backup(request: RestoreRequest):
     """Restore database state from a specified valid backup snapshot."""
     import os
