@@ -264,6 +264,27 @@ class PatientVitalsHistoryResponse(BaseModel):
     patient_id: str = Field(..., description="Patient identifier")
     total_records: int = Field(..., description="Total vital checks recorded")
     vitals_history: List[VitalsEntry] = Field(..., description="Chronological vitals history")
+
+class JsonExportMetadata(BaseModel):
+    exported_at: str = Field(..., description="Timestamp of export generation")
+    total_records: int = Field(..., description="Total patients included in export")
+    version: str = Field(..., description="API software version at export")
+
+class PatientExportResponse(BaseModel):
+    metadata: JsonExportMetadata = Field(..., description="Export metadata")
+    patients: Dict[str, PatientResponse] = Field(..., description="Dictionary of exported patient profiles")
+
+class PatientImportRequest(BaseModel):
+    strategy: Literal["skip", "overwrite", "fail"] = Field(default="skip", description="Collision resolution strategy for existing records")
+    patients: List[Patient] = Field(..., description="List of patient profiles to import")
+
+class PatientImportResponse(BaseModel):
+    message: str = Field(..., description="Summary status of import operation")
+    imported_count: int = Field(..., description="Count of newly created records")
+    skipped_count: int = Field(..., description="Count of records ignored due to collisions")
+    overwritten_count: int = Field(..., description="Count of pre-existing records updated")
+    processed_ids: List[str] = Field(..., description="List of all patient IDs handled")
+
       
 
 def load_data() -> dict:
@@ -461,6 +482,64 @@ def export_patients_csv():
         iter([output.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="patients_export.csv"'}
+    )
+
+@app.get('/patients/export/json', response_model=PatientExportResponse, tags=["Patients"], summary="Export Patients as JSON")
+def export_patients_json():
+    """Export complete patient database as a structured JSON object with system metadata."""
+    data = load_data()
+    metadata = JsonExportMetadata(
+        exported_at=datetime.now().isoformat(),
+        total_records=len(data),
+        version=settings.app_version
+    )
+    return PatientExportResponse(
+        metadata=metadata,
+        patients=data
+    )
+
+@app.post('/patients/import/json', response_model=PatientImportResponse, status_code=status.HTTP_200_OK, tags=["Patients"], summary="Bulk Import Patients via JSON")
+def import_patients_json(request: PatientImportRequest):
+    """Import an array of patient records with collision resolution ('skip', 'overwrite', or 'fail')."""
+    if not request.patients:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Patient list cannot be empty")
+
+    data = load_data()
+    imported_count = 0
+    skipped_count = 0
+    overwritten_count = 0
+    processed_ids = []
+
+    # Check for fail strategy upfront
+    if request.strategy == "fail":
+        conflicts = [p.id for p in request.patients if p.id in data]
+        if conflicts:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Conflict detected on existing patient IDs: {', '.join(conflicts)}"
+            )
+
+    for p in request.patients:
+        processed_ids.append(p.id)
+        if p.id in data:
+            if request.strategy == "skip":
+                skipped_count += 1
+                continue
+            elif request.strategy == "overwrite":
+                data[p.id] = p.model_dump(exclude={'id'})
+                overwritten_count += 1
+        else:
+            data[p.id] = p.model_dump(exclude={'id'})
+            imported_count += 1
+
+    save_data(data)
+
+    return PatientImportResponse(
+        message=f"Import completed: {imported_count} added, {overwritten_count} overwritten, {skipped_count} skipped",
+        imported_count=imported_count,
+        skipped_count=skipped_count,
+        overwritten_count=overwritten_count,
+        processed_ids=processed_ids
     )
 
 @app.get('/analytics/summary', response_model=AnalyticsSummaryResponse, tags=["Analytics"], summary="Population Health Summary")
