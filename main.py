@@ -168,6 +168,7 @@ class PatientBase(BaseModel):
     blood_group: Annotated[Optional[Literal['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']], Field(default=None, description='ABO/Rh blood group type', examples=['O+'])] = None
     allergies: List[str] = Field(default_factory=list, description='Known medical or dietary allergies', examples=[['Penicillin']])
     chronic_conditions: List[str] = Field(default_factory=list, description='Documented chronic health conditions', examples=[['Hypertension']])
+    vitals_history: List[dict] = Field(default_factory=list, description='Historical clinical vitals records')
 
 class Patient(PatientBase):
     id: Annotated[str, Field(..., description='ID of the patient', examples=['P001'])]
@@ -229,7 +230,41 @@ class PatientUpdate(BaseModel):
     weight: Annotated[Optional[float], Field(default=None, gt=0, description="Updated patient weight in kg")]
     blood_group: Annotated[Optional[Literal['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']], Field(default=None, description="Updated blood group")] = None
     allergies: Optional[List[str]] = Field(default=None, description="Updated list of allergies")
-    chronic_conditions: Optional[List[str]] = Field(default=None, description="Updated chronic conditions")      
+    chronic_conditions: Optional[List[str]] = Field(default=None, description="Updated chronic conditions")
+
+class VitalsEntry(BaseModel):
+    systolic: Annotated[int, Field(..., ge=60, le=250, description="Systolic blood pressure in mmHg", examples=[120])]
+    diastolic: Annotated[int, Field(..., ge=40, le=150, description="Diastolic blood pressure in mmHg", examples=[80])]
+    heart_rate: Annotated[int, Field(..., ge=40, le=220, description="Resting heart rate in beats per minute", examples=[72])]
+    temperature_celsius: Annotated[Optional[float], Field(default=None, ge=30.0, le=45.0, description="Body temperature in Celsius", examples=[37.0])] = None
+    spo2_percentage: Annotated[Optional[int], Field(default=None, ge=50, le=100, description="Blood oxygen saturation percentage", examples=[98])] = None
+    recorded_at: str = Field(default_factory=lambda: datetime.now().isoformat(), description="Measurement timestamp")
+
+    @computed_field
+    @property
+    def bp_category(self) -> str:
+        """Categorize blood pressure status according to clinical criteria."""
+        if self.systolic > 180 or self.diastolic > 120:
+            return "Hypertensive Crisis"
+        elif self.systolic >= 140 or self.diastolic >= 90:
+            return "Hypertension Stage 2"
+        elif self.systolic >= 130 or self.diastolic >= 80:
+            return "Hypertension Stage 1"
+        elif self.systolic >= 120 and self.diastolic < 80:
+            return "Elevated"
+        else:
+            return "Normal"
+
+class VitalsResponse(BaseModel):
+    message: str = Field(..., description="Operation status")
+    patient_id: str = Field(..., description="Target patient ID")
+    vitals: VitalsEntry = Field(..., description="Recorded vitals details")
+
+class PatientVitalsHistoryResponse(BaseModel):
+    patient_id: str = Field(..., description="Patient identifier")
+    total_records: int = Field(..., description="Total vital checks recorded")
+    vitals_history: List[VitalsEntry] = Field(..., description="Chronological vitals history")
+      
 
 def load_data() -> dict:
     """Safely load patient records from local JSON storage."""
@@ -281,6 +316,43 @@ def view_patient(patient_id: str = Path(..., description='Unique ID of the patie
     if patient_id in data:
         return data[patient_id]
     raise PatientNotFoundError("Patient not found")
+
+@app.post('/patient/{patient_id}/vitals', response_model=VitalsResponse, status_code=status.HTTP_201_CREATED, tags=["Patients"], summary="Record Patient Vitals")
+def record_patient_vitals(
+    patient_id: str = Path(..., description='Unique ID of the patient', examples=['P001']),
+    vitals: VitalsEntry = ...
+):
+    """Log vital signs including blood pressure, heart rate, temperature, and SpO2 for a patient."""
+    data = load_data()
+    if patient_id not in data:
+        raise PatientNotFoundError("Patient not found")
+
+    vitals_data = vitals.model_dump()
+    data[patient_id].setdefault("vitals_history", []).append(vitals_data)
+    save_data(data)
+
+    return VitalsResponse(
+        message="Vitals recorded successfully",
+        patient_id=patient_id,
+        vitals=vitals
+    )
+
+@app.get('/patient/{patient_id}/vitals', response_model=PatientVitalsHistoryResponse, tags=["Patients"], summary="Get Patient Vitals History")
+def get_patient_vitals(patient_id: str = Path(..., description='Unique ID of the patient', examples=['P001'])):
+    """Retrieve full chronological history of recorded vital signs and blood pressure classifications."""
+    data = load_data()
+    if patient_id not in data:
+        raise PatientNotFoundError("Patient not found")
+
+    history = data[patient_id].get("vitals_history", [])
+    parsed_history = [VitalsEntry(**v) for v in history]
+
+    return PatientVitalsHistoryResponse(
+        patient_id=patient_id,
+        total_records=len(parsed_history),
+        vitals_history=parsed_history
+    )
+
 
 @app.get('/sort', response_model=List[PatientResponse], tags=["Patients"], summary="Sort Patients by Metric")
 def sort_patients(
