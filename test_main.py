@@ -188,6 +188,7 @@ def test_cors_and_process_time_headers():
     response = client.get("/", headers={"Origin": "http://localhost:3000"})
     assert response.status_code == 200
     assert "x-process-time" in response.headers
+    assert "x-request-id" in response.headers
     assert float(response.headers["x-process-time"]) >= 0.0
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
 

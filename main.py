@@ -8,6 +8,8 @@ import json
 import time
 import csv
 import io
+import uuid
+import logging
 from datetime import datetime
 
 from config import get_settings
@@ -46,21 +48,34 @@ app = FastAPI(
     },
 )
 
+logger = logging.getLogger("patient_api")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Process-Time"],
+    expose_headers=["X-Process-Time", "X-Request-ID"],
 )
 
 @app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
+async def request_trace_and_timing_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    request.state.request_id = request_id
     start_time = time.perf_counter()
+
     response = await call_next(request)
+
     process_time = time.perf_counter() - start_time
     response.headers["X-Process-Time"] = f"{process_time:.6f}"
+    response.headers["X-Request-ID"] = request_id
+
+    logger.info(
+        f"request_id={request_id} method={request.method} path={request.url.path} "
+        f"status={response.status_code} latency={process_time:.6f}s"
+    )
     return response
 
 @app.exception_handler(PatientNotFoundError)
@@ -70,6 +85,7 @@ async def patient_not_found_handler(request: Request, exc: PatientNotFoundError)
         content={
             "detail": exc.message,
             "error_code": exc.error_code,
+            "request_id": getattr(request.state, "request_id", None),
             "timestamp": datetime.now().isoformat()
         }
     )
@@ -81,6 +97,7 @@ async def patient_already_exists_handler(request: Request, exc: PatientAlreadyEx
         content={
             "detail": exc.message,
             "error_code": exc.error_code,
+            "request_id": getattr(request.state, "request_id", None),
             "timestamp": datetime.now().isoformat()
         }
     )
@@ -92,6 +109,7 @@ async def invalid_query_parameter_handler(request: Request, exc: InvalidQueryPar
         content={
             "detail": exc.message,
             "error_code": exc.error_code,
+            "request_id": getattr(request.state, "request_id", None),
             "timestamp": datetime.now().isoformat()
         }
     )
@@ -103,6 +121,7 @@ async def authentication_error_handler(request: Request, exc: AuthenticationErro
         content={
             "detail": exc.message,
             "error_code": exc.error_code,
+            "request_id": getattr(request.state, "request_id", None),
             "timestamp": datetime.now().isoformat()
         }
     )
