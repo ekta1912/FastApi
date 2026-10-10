@@ -152,6 +152,26 @@ class RestoreResponse(BaseModel):
     message: str = Field(..., description="Status message")
     restored_records: int = Field(..., description="Count of restored patient records")
 
+class IntegrityIssue(BaseModel):
+    patient_id: str = Field(..., description="Affected patient ID")
+    field: str = Field(..., description="Field failing validation")
+    issue: str = Field(..., description="Description of the discrepancy")
+
+class DatabaseIntegrityResponse(BaseModel):
+    is_healthy: bool = Field(..., description="True if database has zero validation issues")
+    total_checked: int = Field(..., description="Total patient profiles audited")
+    issues_found: int = Field(..., description="Number of discrepancies discovered")
+    issues: List[IntegrityIssue] = Field(..., description="List of specific integrity issues")
+    checked_at: str = Field(..., description="Audit execution timestamp")
+
+class CompactionResponse(BaseModel):
+    message: str = Field(..., description="Operation status")
+    records_compacted: int = Field(..., description="Number of sorted and validated records")
+    bytes_before: int = Field(..., description="File size before compaction in bytes")
+    bytes_after: int = Field(..., description="File size after compaction in bytes")
+    compacted_at: str = Field(..., description="Compaction execution timestamp")
+
+
 class MessageResponse(BaseModel):
     message: str = Field(..., description="Status or information message")
 
@@ -923,4 +943,68 @@ def restore_backup(request: RestoreRequest):
         message=f"Database successfully restored from '{safe_filename}'",
         restored_records=len(backup_data)
     )
+
+@app.get('/admin/integrity', response_model=DatabaseIntegrityResponse, tags=["Admin"], summary="Audit Database Integrity", dependencies=[Security(verify_admin_key)])
+def audit_database_integrity():
+    """Verify data consistency, schema conformity, and BMI accuracy across all stored records."""
+    data = load_data()
+    issues: List[IntegrityIssue] = []
+
+    for pid, pdata in data.items():
+        # Check required fields
+        for req in ["name", "city", "age", "gender", "height", "weight"]:
+            if req not in pdata or pdata[req] is None:
+                issues.append(IntegrityIssue(patient_id=pid, field=req, issue="Missing required field"))
+
+        # Numeric bounds
+        h = pdata.get("height", 0)
+        w = pdata.get("weight", 0)
+        age = pdata.get("age", 0)
+
+        if not (0 < h < 3.0):
+            issues.append(IntegrityIssue(patient_id=pid, field="height", issue=f"Height out of normal range: {h}"))
+        if not (0 < w < 500.0):
+            issues.append(IntegrityIssue(patient_id=pid, field="weight", issue=f"Weight out of normal range: {w}"))
+        if not (0 < age < 120):
+            issues.append(IntegrityIssue(patient_id=pid, field="age", issue=f"Age out of normal range: {age}"))
+
+        # Verify BMI calculation
+        if h > 0 and w > 0:
+            expected_bmi = round(w / (h ** 2), 2)
+            actual_bmi = pdata.get("bmi")
+            if actual_bmi is not None and abs(actual_bmi - expected_bmi) > 0.05:
+                issues.append(IntegrityIssue(
+                    patient_id=pid,
+                    field="bmi",
+                    issue=f"BMI mismatch: stored {actual_bmi} vs calculated {expected_bmi}"
+                ))
+
+    return DatabaseIntegrityResponse(
+        is_healthy=(len(issues) == 0),
+        total_checked=len(data),
+        issues_found=len(issues),
+        issues=issues,
+        checked_at=datetime.now().isoformat()
+    )
+
+@app.post('/admin/compact', response_model=CompactionResponse, tags=["Admin"], summary="Compact & Sort Database", dependencies=[Security(verify_admin_key)])
+def compact_database():
+    """Defragment, sort records deterministically by ID, and optimize database file storage."""
+    bytes_before = DATA_FILE.stat().st_size if DATA_FILE.exists() else 0
+    data = load_data()
+
+    # Sort dictionary by ID keys
+    sorted_data = {k: data[k] for k in sorted(data.keys())}
+    save_data(sorted_data)
+
+    bytes_after = DATA_FILE.stat().st_size if DATA_FILE.exists() else 0
+
+    return CompactionResponse(
+        message="Database compaction and key sorting completed successfully",
+        records_compacted=len(sorted_data),
+        bytes_before=bytes_before,
+        bytes_after=bytes_after,
+        compacted_at=datetime.now().isoformat()
+    )
+
 
