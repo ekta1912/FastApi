@@ -203,7 +203,7 @@ def test_export_patients_csv():
     rows = list(csv_reader)
     assert len(rows) >= 2  # Header + at least 1 record
     headers = rows[0]
-    assert headers == ["id", "name", "city", "age", "gender", "height", "weight", "bmi", "verdict"]
+    assert headers == ["id", "name", "city", "age", "gender", "height", "weight", "bmi", "verdict", "blood_group", "allergies", "chronic_conditions"]
     
     # Check that P001 is included
     p001_row = next((r for r in rows[1:] if r[0] == "P001"), None)

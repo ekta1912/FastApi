@@ -165,6 +165,9 @@ class PatientBase(BaseModel):
     gender: Annotated[Literal['male', 'female', 'others'], Field(..., description='Gender of the patient')]
     height: Annotated[float, Field(..., gt=0, description='Height of the patient in meters', examples=[1.78])]
     weight: Annotated[float, Field(..., gt=0, description='Weight of the patient in kilograms', examples=[78.0])]
+    blood_group: Annotated[Optional[Literal['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']], Field(default=None, description='ABO/Rh blood group type', examples=['O+'])] = None
+    allergies: List[str] = Field(default_factory=list, description='Known medical or dietary allergies', examples=[['Penicillin']])
+    chronic_conditions: List[str] = Field(default_factory=list, description='Documented chronic health conditions', examples=[['Hypertension']])
 
 class Patient(PatientBase):
     id: Annotated[str, Field(..., description='ID of the patient', examples=['P001'])]
@@ -223,7 +226,10 @@ class PatientUpdate(BaseModel):
     age: Annotated[Optional[int], Field(default=None, gt=0, lt=120, description="Updated patient age")]
     gender: Annotated[Optional[Literal['male', 'female', 'others']], Field(default=None, description="Updated patient gender")]
     height: Annotated[Optional[float], Field(default=None, gt=0, description="Updated patient height in meters")]
-    weight: Annotated[Optional[float], Field(default=None, gt=0, description="Updated patient weight in kg")]      
+    weight: Annotated[Optional[float], Field(default=None, gt=0, description="Updated patient weight in kg")]
+    blood_group: Annotated[Optional[Literal['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-']], Field(default=None, description="Updated blood group")] = None
+    allergies: Optional[List[str]] = Field(default=None, description="Updated list of allergies")
+    chronic_conditions: Optional[List[str]] = Field(default=None, description="Updated chronic conditions")      
 
 def load_data() -> dict:
     """Safely load patient records from local JSON storage."""
@@ -354,11 +360,15 @@ def export_patients_csv():
     writer = csv.writer(output)
 
     # Write CSV headers
-    headers = ["id", "name", "city", "age", "gender", "height", "weight", "bmi", "verdict"]
+    headers = ["id", "name", "city", "age", "gender", "height", "weight", "bmi", "verdict", "blood_group", "allergies", "chronic_conditions"]
     writer.writerow(headers)
 
     # Write patient rows
     for pid, pdata in data.items():
+        allergies = pdata.get("allergies", [])
+        allergies_str = "; ".join(allergies) if isinstance(allergies, list) else str(allergies or "")
+        conditions = pdata.get("chronic_conditions", [])
+        conditions_str = "; ".join(conditions) if isinstance(conditions, list) else str(conditions or "")
         writer.writerow([
             pid,
             pdata.get("name", ""),
@@ -368,7 +378,10 @@ def export_patients_csv():
             pdata.get("height", ""),
             pdata.get("weight", ""),
             pdata.get("bmi", ""),
-            pdata.get("verdict", "")
+            pdata.get("verdict", ""),
+            pdata.get("blood_group", ""),
+            allergies_str,
+            conditions_str
         ])
 
     output.seek(0)
