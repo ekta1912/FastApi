@@ -285,6 +285,20 @@ class PatientImportResponse(BaseModel):
     overwritten_count: int = Field(..., description="Count of pre-existing records updated")
     processed_ids: List[str] = Field(..., description="List of all patient IDs handled")
 
+class CityHealthMetric(BaseModel):
+    city: str = Field(..., description="City name")
+    patient_count: int = Field(..., description="Total patients in this city")
+    average_bmi: float = Field(..., description="Average BMI of patients in city")
+    average_age: float = Field(..., description="Average age of patients in city")
+
+class DemographicsAnalyticsResponse(BaseModel):
+    total_evaluated: int = Field(..., description="Total patient profiles evaluated")
+    age_brackets: Dict[str, int] = Field(..., description="Patient breakdown by demographic age groups")
+    blood_group_distribution: Dict[str, int] = Field(..., description="Breakdown by ABO/Rh blood groups")
+    allergy_frequency: Dict[str, int] = Field(..., description="Occurrence frequency of documented allergies")
+    top_cities: List[CityHealthMetric] = Field(..., description="Aggregated health metrics grouped by city")
+
+
       
 
 def load_data() -> dict:
@@ -657,6 +671,68 @@ def get_risk_assessment():
         risk_breakdown=breakdown,
         high_risk_percentage=high_risk_percentage,
         patients=assessed_patients
+    )
+
+@app.get('/analytics/demographics', response_model=DemographicsAnalyticsResponse, tags=["Analytics"], summary="Demographics & Regional Analysis")
+def get_demographics_analytics():
+    """Analyze population age brackets, blood type distribution, allergy frequencies, and regional city metrics."""
+    data = load_data()
+    total = len(data)
+    if total == 0:
+        return DemographicsAnalyticsResponse(
+            total_evaluated=0,
+            age_brackets={"Pediatric (0-17)": 0, "Young Adult (18-35)": 0, "Middle Aged (36-55)": 0, "Senior (56+)": 0},
+            blood_group_distribution={},
+            allergy_frequency={},
+            top_cities=[]
+        )
+
+    brackets = {"Pediatric (0-17)": 0, "Young Adult (18-35)": 0, "Middle Aged (36-55)": 0, "Senior (56+)": 0}
+    blood_groups: Dict[str, int] = {}
+    allergies: Dict[str, int] = {}
+    city_data: Dict[str, List[dict]] = {}
+
+    for p in data.values():
+        age = p.get("age", 0)
+        if age <= 17:
+            brackets["Pediatric (0-17)"] += 1
+        elif age <= 35:
+            brackets["Young Adult (18-35)"] += 1
+        elif age <= 55:
+            brackets["Middle Aged (36-55)"] += 1
+        else:
+            brackets["Senior (56+)"] += 1
+
+        bg = p.get("blood_group") or "Unspecified"
+        blood_groups[bg] = blood_groups.get(bg, 0) + 1
+
+        for allergy in p.get("allergies", []):
+            cleaned_allergy = allergy.strip().title()
+            allergies[cleaned_allergy] = allergies.get(cleaned_allergy, 0) + 1
+
+        city_name = p.get("city", "Unknown").strip().title()
+        city_data.setdefault(city_name, []).append(p)
+
+    cities_summary = []
+    for city, plist in city_data.items():
+        count = len(plist)
+        avg_bmi = round(sum(p.get("bmi", 0.0) for p in plist) / count, 2)
+        avg_age = round(sum(p.get("age", 0) for p in plist) / count, 2)
+        cities_summary.append(CityHealthMetric(
+            city=city,
+            patient_count=count,
+            average_bmi=avg_bmi,
+            average_age=avg_age
+        ))
+
+    cities_summary.sort(key=lambda x: x.patient_count, reverse=True)
+
+    return DemographicsAnalyticsResponse(
+        total_evaluated=total,
+        age_brackets=brackets,
+        blood_group_distribution=blood_groups,
+        allergy_frequency=allergies,
+        top_cities=cities_summary
     )
 
 @app.get('/patients/high-risk', response_model=List[PatientRiskProfile], tags=["Patients"], summary="Get High-Risk Patients")
