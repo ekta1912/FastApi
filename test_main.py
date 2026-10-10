@@ -364,6 +364,164 @@ def test_delete_patient_not_found():
     assert res.status_code == 404
     assert res.json()["error_code"] == "PATIENT_NOT_FOUND"
 
+def test_record_patient_vitals_and_history():
+    vitals_payload = {
+        "systolic": 124,
+        "diastolic": 76,
+        "heart_rate": 72,
+        "temperature_celsius": 36.8,
+        "spo2_percentage": 99
+    }
+    # 1. Record vitals for P001
+    res = client.post("/patient/P001/vitals", json=vitals_payload)
+    assert res.status_code == 201
+    data = res.json()
+    assert data["message"] == "Vitals recorded successfully"
+    assert data["vitals"]["bp_category"] == "Elevated"
+
+    # 2. Record crisis vitals for P001
+    crisis_payload = {
+        "systolic": 185,
+        "diastolic": 125,
+        "heart_rate": 105
+    }
+    crisis_res = client.post("/patient/P001/vitals", json=crisis_payload)
+    assert crisis_res.status_code == 201
+    assert crisis_res.json()["vitals"]["bp_category"] == "Hypertensive Crisis"
+
+    # 3. Retrieve vitals history
+    hist_res = client.get("/patient/P001/vitals")
+    assert hist_res.status_code == 200
+    hist = hist_res.json()
+    assert hist["total_records"] >= 2
+    assert len(hist["vitals_history"]) >= 2
+
+    # 4. Error on non-existent patient
+    err_res = client.post("/patient/NONEXISTENT_PATIENT/vitals", json=vitals_payload)
+    assert err_res.status_code == 404
+
+def test_patient_clinical_fields_crud():
+    patient_id = "PTEST_CLINICAL_01"
+    new_patient = {
+        "id": patient_id,
+        "name": "Clinical Test Patient",
+        "city": "Chandigarh",
+        "age": 42,
+        "gender": "male",
+        "height": 1.75,
+        "weight": 70.0,
+        "blood_group": "B+",
+        "allergies": ["Aspirin", "Peanuts"],
+        "chronic_conditions": ["Asthma"]
+    }
+    # Create
+    create_res = client.post("/create", json=new_patient)
+    assert create_res.status_code == 201
+
+    # Get
+    get_res = client.get(f"/patient/{patient_id}")
+    assert get_res.status_code == 200
+    p = get_res.json()
+    assert p["blood_group"] == "B+"
+    assert "Aspirin" in p["allergies"]
+    assert "Asthma" in p["chronic_conditions"]
+
+    # Update
+    update_res = client.put(f"/edit/{patient_id}", json={"blood_group": "AB+", "allergies": ["Shellfish"]})
+    assert update_res.status_code == 200
+
+    # Confirm updated
+    get_res2 = client.get(f"/patient/{patient_id}")
+    assert get_res2.status_code == 200
+    p2 = get_res2.json()
+    assert p2["blood_group"] == "AB+"
+    assert p2["allergies"] == ["Shellfish"]
+
+    # Delete
+    del_res = client.delete(f"/delete/{patient_id}")
+    assert del_res.status_code == 200
+
+def test_export_patients_json():
+    res = client.get("/patients/export/json")
+    assert res.status_code == 200
+    data = res.json()
+    assert "metadata" in data
+    assert "patients" in data
+    assert data["metadata"]["total_records"] >= 1
+    assert "P001" in data["patients"]
+
+def test_import_patients_json():
+    import_payload = {
+        "strategy": "skip",
+        "patients": [
+            {
+                "id": "PIMPORT_01",
+                "name": "Imported Patient One",
+                "city": "Bhopal",
+                "age": 34,
+                "gender": "female",
+                "height": 1.62,
+                "weight": 58.0
+            }
+        ]
+    }
+    # 1. Success import
+    res = client.post("/patients/import/json", json=import_payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["imported_count"] == 1
+    assert "PIMPORT_01" in data["processed_ids"]
+
+    # 2. Import same with skip strategy
+    res_skip = client.post("/patients/import/json", json=import_payload)
+    assert res_skip.status_code == 200
+    assert res_skip.json()["skipped_count"] == 1
+
+    # 3. Import same with fail strategy
+    fail_payload = {**import_payload, "strategy": "fail"}
+    res_fail = client.post("/patients/import/json", json=fail_payload)
+    assert res_fail.status_code == 400
+    assert "Conflict detected" in res_fail.json()["detail"]
+
+    # Cleanup
+    client.delete("/delete/PIMPORT_01")
+
+def test_demographics_analytics():
+    res = client.get("/analytics/demographics")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total_evaluated"] >= 1
+    assert "Pediatric (0-17)" in data["age_brackets"]
+    assert "Young Adult (18-35)" in data["age_brackets"]
+    assert isinstance(data["top_cities"], list)
+    if data["top_cities"]:
+        first_city = data["top_cities"][0]
+        assert "city" in first_city
+        assert "patient_count" in first_city
+        assert "average_bmi" in first_city
+
+def test_admin_integrity_and_compaction():
+    admin_headers = {"X-API-Key": "admin-secret-key-123"}
+
+    # Unauthorized tests
+    assert client.get("/admin/integrity").status_code == 401
+    assert client.post("/admin/compact").status_code == 401
+
+    # Authorized integrity audit
+    integ_res = client.get("/admin/integrity", headers=admin_headers)
+    assert integ_res.status_code == 200
+    integ_data = integ_res.json()
+    assert "is_healthy" in integ_data
+    assert integ_data["total_checked"] >= 1
+
+    # Authorized compaction
+    comp_res = client.post("/admin/compact", headers=admin_headers)
+    assert comp_res.status_code == 200
+    comp_data = comp_res.json()
+    assert comp_data["records_compacted"] >= 1
+    assert comp_data["bytes_after"] > 0
+
+
 
 
 
